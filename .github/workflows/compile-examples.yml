@@ -1,0 +1,103 @@
+name: Compile Arduino sketches
+
+on:
+  push:
+    paths:
+      - ".github/workflows/compile-examples.yml"
+      - "examples/**"
+      - "extras/hardware-tests/**"
+      - "scripts/**"
+      - "src/**"
+      - "library.properties"
+  pull_request:
+    paths:
+      - ".github/workflows/compile-examples.yml"
+      - "examples/**"
+      - "extras/hardware-tests/**"
+      - "scripts/**"
+      - "src/**"
+      - "library.properties"
+  schedule:
+    # Also detect breakage caused by external Arduino CLI or package changes.
+    - cron: "0 8 * * TUE"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compile-sketches-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UIAP_BOARD_MANAGER_URL: https://github.com/YuukiUmeta-UIAP/board_manager_files/raw/main/package_uiap.jp_index.json
+  UIAP_CORE: UIAP:ch32v@1.0.42
+  UIAPIR_FQBN: UIAP:ch32v:CH32V00x_EVT:pnum=CH32V003V1DOT4
+
+jobs:
+  compile:
+    name: UIAPduino Pro Micro CH32V003 V1.4
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install pinned UIAPduino core
+        run: |
+          arduino-cli core update-index --additional-urls "${UIAP_BOARD_MANAGER_URL}"
+          arduino-cli core install "${UIAP_CORE}" --additional-urls "${UIAP_BOARD_MANAGER_URL}"
+
+      - name: Compile examples and hardware tests
+        env:
+          SKIP_HOST_TESTS: "1"
+        run: sh scripts/check.sh
+
+  compile-portable:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Arduino Uno
+            core: arduino:avr
+            fqbn: arduino:avr:uno
+            urls: ""
+          - name: Arduino Pro Mini 3.3V 8MHz
+            core: arduino:avr
+            fqbn: arduino:avr:pro:cpu=8MHzatmega328
+            urls: ""
+          - name: Arduino Pro Mini 5V 16MHz
+            core: arduino:avr
+            fqbn: arduino:avr:pro:cpu=16MHzatmega328
+            urls: ""
+          - name: ESP32 Dev Module
+            core: esp32:esp32
+            fqbn: esp32:esp32:esp32
+            urls: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install board core
+        run: |
+          if [ -n "${{ matrix.urls }}" ]; then
+            arduino-cli core update-index --additional-urls "${{ matrix.urls }}"
+            arduino-cli core install "${{ matrix.core }}" --additional-urls "${{ matrix.urls }}"
+          else
+            arduino-cli core update-index
+            arduino-cli core install "${{ matrix.core }}"
+          fi
+
+      - name: Compile portable examples and test firmware
+        run: |
+          arduino-cli compile --fqbn "${{ matrix.fqbn }}" --libraries . examples/Receive
+          arduino-cli compile --fqbn "${{ matrix.fqbn }}" --libraries . extras/hardware-tests/PortableSmokeTest

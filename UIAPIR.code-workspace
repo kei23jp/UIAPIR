@@ -1,0 +1,52 @@
+{
+  // Open this file in VS Code ("File > Open Workspace from File") to get the
+  // library and both PlatformIO projects in one window. Pick the project and
+  // the environment from the PlatformIO status bar at the bottom.
+  //
+  // The two PlatformIO folders live inside the library folder. That is
+  // deliberate: the repository root is an Arduino library and must stay one,
+  // so the PlatformIO projects sit beside the sketches they build rather than
+  // taking the root over.
+  "folders": [
+    {
+      "name": "UIAPIR (library)",
+      "path": "."
+    },
+    {
+      "name": "sketches (PlatformIO)",
+      "path": "extras/platformio"
+    },
+    {
+      "name": "HT6 two-board (PlatformIO)",
+      "path": "extras/hardware-tests/HT6_TwoBoard"
+    }
+  ],
+  "settings": {
+    // .ino files are C++ here: every sketch in this repository defines its
+    // helpers before using them, so none of them needs Arduino's prototype
+    // generation. Without this they open as plain text.
+    "files.associations": {
+      "*.ino": "cpp"
+    },
+    "C_Cpp.default.cppStandard": "gnu++14",
+    "C_Cpp.default.cStandard": "gnu11",
+
+    // Build output. Watching it costs a lot and finding it in a search costs
+    // more; neither folder is checked in.
+    "files.watcherExclude": {
+      "**/.pio/**": true,
+      "**/build/**": true,
+      "**/.test-build/**": true
+    },
+    "search.exclude": {
+      "**/.pio/**": true,
+      "**/build/**": true,
+      "**/.test-build/**": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "platformio.platformio-ide"
+    ]
+  }
+}

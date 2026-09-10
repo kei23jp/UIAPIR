@@ -1,0 +1,24 @@
+# Local test and Arduino build output
+/.test-build/
+/build/
+/dist/
+
+# PlatformIO build output and per-machine settings (extras/hardware-tests/HT6_TwoBoard)
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Compiler output accidentally produced outside the build directories
+*.bin
+*.elf
+*.hex
+*.map
+*.o
+*.obj
+*.exe
+
+# Editor and operating-system files
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db

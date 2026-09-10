@@ -1,0 +1,45 @@
+name: Check
+
+on:
+  push:
+    paths:
+      - ".github/workflows/check.yml"
+      - "src/**"
+      - "tests/**"
+      - "library.properties"
+  pull_request:
+    paths:
+      - ".github/workflows/check.yml"
+      - "src/**"
+      - "tests/**"
+      - "library.properties"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile and run tests
+        run: sh tests/run.sh
+
+  arduino-lint:
+    name: Arduino library metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Arduino Lint
+        uses: arduino/arduino-lint-action@v3
+        with:
+          compliance: specification
+          project-type: library
