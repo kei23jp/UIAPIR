@@ -22,6 +22,55 @@ bool samePhysicalPin(uint8_t a, uint8_t b) {
     }
     return CH_PORT(pa) == CH_PORT(pb) && CH_GPIO_PIN(pa) == CH_GPIO_PIN(pb);
 }
+
+// The TIM1 output channel behind a pad, or 0 for a pad that has none.
+//
+// This is the CH32V003's reset-state (non-remapped) TIM1 mapping, the one the
+// core's PinMap_TIM lists. UIAPIR never touches AFIO_PCFR1, so TIM1_RM stays
+// 00 and these four are the only pads a carrier can come out of. The
+// complementary outputs CH1N (PD0), CH2N (PA2) and CH3N (PD1) are left out on
+// purpose: PD1 is SWIO, the programming line, and the other two would need the
+// dead-time and idle-state fields configured for no gain on a board that has
+// four plain channels already.
+//
+//   channel  pad  UIAPduino silk
+//   CH1      PD2  A3
+//   CH2      PA1  A1
+//   CH3      PC3  5
+//   CH4      PC4  A2 (also D6)
+uint8_t carrierChannelOf(uint8_t arduinoPin) {
+    const PinName pin = digitalPinToPinName(arduinoPin);
+    if (pin == NC) {
+        return 0;
+    }
+    const uint32_t port = CH_PORT(pin);
+    const uint32_t mask = CH_GPIO_PIN(pin);
+    if (port == PortD && mask == GPIO_Pin_2) return 1;
+    if (port == PortA && mask == GPIO_Pin_1) return 2;
+    if (port == PortC && mask == GPIO_Pin_3) return 3;
+    if (port == PortC && mask == GPIO_Pin_4) return 4;
+    return 0;
+}
+
+volatile uint32_t *carrierCompareRegisterOf(uint8_t channel) {
+    switch (channel) {
+    case 1: return &TIM1->CH1CVR;
+    case 2: return &TIM1->CH2CVR;
+    case 3: return &TIM1->CH3CVR;
+    default: return &TIM1->CH4CVR;
+    }
+}
+
+// TIM_Channel_1..4 as TIM_CCxCmd() wants them: 0, 4, 8, 12.
+uint16_t timChannelIdOf(uint8_t channel) {
+    return (uint16_t)((channel - 1U) * 4U);
+}
+
+uint32_t gpioClockOf(const GPIO_TypeDef *port) {
+    if (port == GPIOA) return RCC_APB2Periph_GPIOA;
+    if (port == GPIOC) return RCC_APB2Periph_GPIOC;
+    return RCC_APB2Periph_GPIOD;
+}
 #else
 bool samePhysicalPin(uint8_t a, uint8_t b) {
     return a == b;
@@ -45,7 +94,9 @@ UIAPIR::UIAPIR()
     : _rxPin(UIAPIR_UNUSED_PIN), _txPin(UIAPIR_UNUSED_PIN), _started(false),
       _receiverAttached(false), _carrierCompare(0), _carrierKHz(0), _txElapsedUs(0),
 #if UIAPIR_BACKEND_CH32V003
-      _rxPort(nullptr), _rxMask(0), _lastEdgeTicks(0), _lastEdgeMs(0),
+      _rxPort(nullptr), _rxMask(0), _carrierChannel(0), _carrierPort(nullptr),
+      _carrierPinMask(0), _carrierCompareReg(&TIM1->CH4CVR), _lastEdgeTicks(0),
+      _lastEdgeMs(0),
 #else
       _lastEdgeUs(0),
 #endif
@@ -60,13 +111,14 @@ bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config) {
     if (_active && _active != this) {
         return false; // EXTI callback and timers are intentionally single-instance.
     }
-    // The CH32V003 carrier comes from TIM1_CH4, which exists on PC4 and nowhere else on
-    // this part, so the transmit pin has to be that pad. It does not have to be
-    // spelled `6`: the board silk prints A2 there, and A2 (0xc2) and D6 (6) are
-    // two Arduino numbers for the same pin. Comparing the numbers would refuse
-    // the one written on the board.
+    // The CH32V003 carrier is TIM1 PWM, so the transmit pin has to be a pad
+    // with a TIM1 output channel behind it: PD2, PA1, PC3 or PC4 (silk A3, A1,
+    // 5, A2). The check resolves the pad rather than comparing Arduino
+    // numbers: A2 (0xc2) and D6 (6) are two numbers for the same PC4, and a
+    // sketch written against the board silk must not be refused for it.
 #if UIAPIR_BACKEND_CH32V003
-    if (txPin != UIAPIR_UNUSED_PIN && !samePhysicalPin(txPin, UIAPIR_DEFAULT_TX_PIN)) {
+    const uint8_t carrierChannel = (txPin == UIAPIR_UNUSED_PIN) ? 0 : carrierChannelOf(txPin);
+    if (txPin != UIAPIR_UNUSED_PIN && carrierChannel == 0) {
         return false;
     }
 #endif
@@ -134,6 +186,22 @@ bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config) {
     uint8_t *oldCaptureBuffer = _captureBuffer;
     const bool oldOwnsCaptureBuffer = _ownsCaptureBuffer;
 
+#if UIAPIR_BACKEND_CH32V003
+    // Moving the carrier to another pad on a started instance: hand the old
+    // pad back first, or TIM1 would keep it claimed and driven low.
+    if (_started && _txPin != UIAPIR_UNUSED_PIN &&
+        (txPin == UIAPIR_UNUSED_PIN || !samePhysicalPin(_txPin, txPin))) {
+        releaseCarrierPad();
+    }
+    _carrierChannel = carrierChannel;
+    if (carrierChannel != 0) {
+        const PinName pin = digitalPinToPinName(txPin);
+        _carrierPort = get_GPIO_Port(CH_PORT(pin));
+        _carrierPinMask = (uint16_t)CH_GPIO_PIN(pin);
+        _carrierCompareReg = carrierCompareRegisterOf(carrierChannel);
+    }
+#endif
+
     _rxPin = rxPin;
     _txPin = txPin;
     _captureBuffer = nextCaptureBuffer;
@@ -169,9 +237,8 @@ void UIAPIR::end() {
 #if UIAPIR_BACKEND_CH32V003
     if (_carrierCompare != 0) {
         // TIM1 is only clocked once a transmit has configured the carrier.
-        carrierOff();
+        releaseCarrierPad();
         TIM_Cmd(TIM1, DISABLE);
-        _carrierCompare = 0;
     }
     TIM_Cmd(TIM2, DISABLE);
 #else
@@ -211,20 +278,19 @@ bool UIAPIR::configureTimingTimer() {
 
 bool UIAPIR::configureCarrier(uint8_t carrierKHz) {
     // [ChaN] the three supported formats all sit in the 33..40 kHz band.
-    // Same pad test as begin(): everything below writes GPIOC pin 4 and
-    // TIM1_CH4 directly, so it is only correct for that one pad, whichever
-    // Arduino number named it.
+    // begin() resolved the pad to a TIM1 channel; everything below programs
+    // that channel and that pad, whichever Arduino number named it.
 #if UIAPIR_BACKEND_CH32V003
-    if (!samePhysicalPin(_txPin, UIAPIR_DEFAULT_TX_PIN) || carrierKHz < 20 || carrierKHz > 60) {
+    if (_carrierChannel == 0 || carrierKHz < 20 || carrierKHz > 60) {
         return false;
     }
 
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC | RCC_APB2Periph_TIM1, ENABLE);
+    RCC_APB2PeriphClockCmd(gpioClockOf(_carrierPort) | RCC_APB2Periph_TIM1, ENABLE);
     GPIO_InitTypeDef gpio = {};
-    gpio.GPIO_Pin = GPIO_Pin_4; // UIAPduino D6 / PC4 / TIM1_CH4.
+    gpio.GPIO_Pin = _carrierPinMask;
     gpio.GPIO_Speed = GPIO_Speed_10MHz;
     gpio.GPIO_Mode = GPIO_Mode_AF_PP;
-    GPIO_Init(GPIOC, &gpio);
+    GPIO_Init(_carrierPort, &gpio);
 
     const uint32_t frequency = (uint32_t)carrierKHz * 1000U;
     uint32_t periodCounts = (SystemCoreClock + frequency / 2U) / frequency;
@@ -245,8 +311,26 @@ bool UIAPIR::configureCarrier(uint8_t carrierKHz) {
     output.TIM_OutputState = TIM_OutputState_Enable;
     output.TIM_Pulse = 0;
     output.TIM_OCPolarity = TIM_OCPolarity_High;
-    TIM_OC4Init(TIM1, &output);
-    TIM_OC4PreloadConfig(TIM1, TIM_OCPreload_Disable);
+    // TIM_OC1..3Init() also take the complementary-output and idle-state
+    // fields; zero-initialised they leave CHxN disabled and idle low.
+    switch (_carrierChannel) {
+    case 1:
+        TIM_OC1Init(TIM1, &output);
+        TIM_OC1PreloadConfig(TIM1, TIM_OCPreload_Disable);
+        break;
+    case 2:
+        TIM_OC2Init(TIM1, &output);
+        TIM_OC2PreloadConfig(TIM1, TIM_OCPreload_Disable);
+        break;
+    case 3:
+        TIM_OC3Init(TIM1, &output);
+        TIM_OC3PreloadConfig(TIM1, TIM_OCPreload_Disable);
+        break;
+    default:
+        TIM_OC4Init(TIM1, &output);
+        TIM_OC4PreloadConfig(TIM1, TIM_OCPreload_Disable);
+        break;
+    }
     TIM_ARRPreloadConfig(TIM1, ENABLE);
     TIM_CtrlPWMOutputs(TIM1, ENABLE);
     TIM_SetCounter(TIM1, 0);
@@ -268,7 +352,7 @@ bool UIAPIR::configureCarrier(uint8_t carrierKHz) {
 
 void UIAPIR::carrierOn() {
 #if UIAPIR_BACKEND_CH32V003
-    TIM1->CH4CVR = _carrierCompare;
+    *_carrierCompareReg = _carrierCompare;
 #else
     tone(_txPin, (uint32_t)_carrierKHz * 1000U);
 #endif
@@ -276,7 +360,7 @@ void UIAPIR::carrierOn() {
 
 void UIAPIR::carrierOff() {
 #if UIAPIR_BACKEND_CH32V003
-    TIM1->CH4CVR = 0;
+    *_carrierCompareReg = 0;
 #else
     if (_txPin != UIAPIR_UNUSED_PIN) {
         noTone(_txPin);
@@ -288,6 +372,23 @@ void UIAPIR::carrierOff() {
 #if UIAPIR_BACKEND_CH32V003
 uint16_t UIAPIR::timerNow() const {
     return (uint16_t)TIM_GetCounter(TIM2);
+}
+
+// Undo configureCarrier() for the current pad. Used when end() releases the
+// transmitter and when begin() moves it to another pad; a no-op until a
+// transmit has actually programmed TIM1 for this pad.
+void UIAPIR::releaseCarrierPad() {
+    if (_carrierCompare == 0) {
+        return;
+    }
+    carrierOff();
+    TIM_CCxCmd(TIM1, timChannelIdOf(_carrierChannel), TIM_CCx_Disable);
+    // Hand the pad back as a plain output held low. Left in alternate function
+    // it would stay claimed by TIM1; left floating, an LED driver's base would
+    // be undefined.
+    pinMode(_txPin, OUTPUT);
+    digitalWrite(_txPin, LOW);
+    _carrierCompare = 0;
 }
 #endif
 

@@ -30,7 +30,7 @@ void end();
 
 ピンを確保し、タイムベースと受信割り込みを開始します。`rxPin` に `UIAPIR_UNUSED_PIN` を渡すと送信専用インスタンスになり、受信バッファも確保されません。`txPin` に `UIAPIR_UNUSED_PIN` を渡すと受信専用になります。
 
-CH32V003 の `txPin` は PC4 でなければなりません。キャリアが TIM1_CH4 から出るためです。**`6` と `A2` はどちらも PC4 を指すため、両方受け付けます**（基板シルクは `A2`）。他の Arduino 対応ボードでは `tone()` を出力できる GPIO を指定してください。`rxPin` には `attachInterrupt()` を使える GPIO が必要です。
+CH32V003 の `txPin` は、TIM1 の出力チャネルを持つパッドでなければなりません。キャリアが TIM1 の PWM から出るためです。既定のピン割り当てでは PD2（`A3`、CH1）、PA1（`A1`、CH2）、PC3（`5`、CH3）、PC4（`A2` / `6`、CH4）の 4 つで、既定値 `UIAPIR_DEFAULT_TX_PIN` は PC4 です。**`6` と `A2` はどちらも PC4 を指すため、両方受け付けます**（基板シルクは `A2`）。開始済みのインスタンスに別の `txPin` で `begin()` を呼ぶと、古いパッドを LOW の通常出力に戻してからキャリアを移します。他の Arduino 対応ボードでは `tone()` を出力できる GPIO を指定してください。`rxPin` には `attachInterrupt()` を使える GPIO が必要です。
 
 すでに `begin()` 済みのインスタンスに再度 `begin()` を呼ぶと、古いピンの割り込みを解除してから新しいピンで張り直します。
 
@@ -39,7 +39,7 @@ CH32V003 の `txPin` は PC4 でなければなりません。キャリアが TI
 | | |
 |---|---|
 | 別の `UIAPIR` インスタンスが既に `begin()` 済み | タイマーと受信割り込みは意図的に単一インスタンス専有です |
-| CH32V003 で `txPin` が PC4 でも `UIAPIR_UNUSED_PIN` でもない | TIM1_CH4 は PC4 にしか出ません |
+| CH32V003 で `txPin` が PD2 / PA1 / PC3 / PC4 のいずれでも `UIAPIR_UNUSED_PIN` でもない | キャリアは TIM1 の PWM なので、TIM1 出力のあるパッドが必要です |
 | `rxPin` がこのボードで割り込みを使えない | 通してしまうと「一度も発火しない受信機」になります |
 | `rxPin` と `txPin` が同じ物理パッド | 1 つのパッドに復調器出力とプッシュプルのキャリア出力は同居できません |
 | `config.captureBufferSize` が範囲外 | `UIAPIR_MIN_FRAME_DURATIONS` 以上 `UIAPIR_RAW_BUFFER_SIZE` 以下である必要があります |

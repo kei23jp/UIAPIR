@@ -11,7 +11,7 @@
 #include <UIAPIR.h>
 
 static const uint8_t RX_PIN = 3;   // PC1
-static const uint8_t TX_PIN = 6;   // PC4 / TIM1_CH4, the only carrier pad
+static const uint8_t TX_PIN = 6;   // PC4 / TIM1_CH4, the default carrier pad
 
 static unsigned passed = 0;
 static unsigned failed = 0;
@@ -56,9 +56,9 @@ void setup() {
         !ir.begin(TX_PIN, A2));
 
   // --- the TX pad may be named either way ---------------------------------
-  // The carrier is TIM1_CH4, which is PC4 and nowhere else, but the board silk
-  // prints A2 on that pad. Both spellings have to be accepted, or a sketch
-  // written against the silk is refused for no reason a user can see.
+  // The board silk prints A2 on PC4, the default carrier pad. Both spellings
+  // have to be accepted, or a sketch written against the silk is refused for
+  // no reason a user can see.
   check("begin(D3, A2) accepted: A2 is the same PC4 as D6",
         ir.begin(RX_PIN, A2));
   ir.end();
@@ -67,8 +67,34 @@ void setup() {
   check("sendNEC() works with TX given as A2", ir.sendNEC(0x12, 0x34));
   ir.end();
 
-  // --- rejected: TX pin other than PC4 ------------------------------------
-  check("begin(D3, D5) rejected: TIM1_CH4 is only on PC4", !ir.begin(RX_PIN, 5));
+  // --- TX on any TIM1 output channel ---------------------------------------
+  // The carrier is TIM1 PWM. In the part's default pin mapping TIM1 has four
+  // output channels: PD2 (A3), PA1 (A1), PC3 (D5) and PC4 (A2 / D6). Every one
+  // of them is a valid transmit pin.
+  check("begin(D3, A1) accepted: PA1 is TIM1_CH2", ir.begin(RX_PIN, A1));
+  check("sendNEC() works with TX on A1", ir.sendNEC(0x12, 0x34));
+  ir.end();
+  check("begin(D3, A3) accepted: PD2 is TIM1_CH1", ir.begin(RX_PIN, A3));
+  ir.end();
+  check("begin(D3, D5) accepted: PC3 is TIM1_CH3", ir.begin(RX_PIN, 5));
+  ir.end();
+  check("begin(A1, A1) rejected: same pad", !ir.begin(A1, A1));
+
+  // --- the carrier may move pads on a started instance ---------------------
+  // begin() on a started instance has to give the old pad back, or TIM1 would
+  // keep driving it, and the new pad has to carry the next transmit.
+  check("begin(D3, A2) accepted, then transmits",
+        ir.begin(RX_PIN, A2) && ir.sendNEC(0x12, 0x34));
+  check("begin(D3, A1) on the started instance moves the carrier",
+        ir.begin(RX_PIN, A1));
+  check("sendNEC() works after the move", ir.sendNEC(0x12, 0x34));
+  check("A2 is a plain low output after the move", digitalRead(A2) == LOW);
+  ir.end();
+
+  // --- rejected: TX pad with no TIM1 output --------------------------------
+  check("begin(D3, D7) rejected: PC5 has no TIM1 output", !ir.begin(RX_PIN, 7));
+  check("begin(D3, D11) rejected: PD1 is SWIO, not offered as a carrier pad",
+        !ir.begin(RX_PIN, 11));
   check("begin(D3, 100) rejected: no such pin", !ir.begin(RX_PIN, 100));
 
   // --- a second instance may not take the shared timers (#1) --------------

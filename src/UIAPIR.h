@@ -7,8 +7,9 @@
 #include "UIAPIRTypes.h"
 #include "UIAPIRCapture.h"
 
-// The CH32V003 backend drives TIM1_CH4 directly. Every other Arduino core
-// uses the portable backend built from tone(), micros(), and attachInterrupt().
+// The CH32V003 backend drives a TIM1 output channel directly. Every other
+// Arduino core uses the portable backend built from tone(), micros(), and
+// attachInterrupt().
 #if defined(CH32V00x) || defined(CH32V003F4) || defined(CH32V003)
 #define UIAPIR_BACKEND_CH32V003 1
 #else
@@ -41,7 +42,8 @@ public:
     UIAPIR(const UIAPIR &) = delete;
     UIAPIR &operator=(const UIAPIR &) = delete;
 
-    // On UIAPduino / CH32V003, TX is fixed to PC4 (D6 / A2, TIM1_CH4).
+    // On UIAPduino / CH32V003, TX must be a pad with a TIM1 output channel:
+    // PD2 (A3, CH1), PA1 (A1, CH2), PC3 (5, CH3) or PC4 (A2 / D6, CH4).
     // Other Arduino targets can use any tone-capable output pin.
     // UIAPIR_UNUSED_PIN builds a receive-only instance.
     bool begin(uint8_t rxPin, uint8_t txPin = UIAPIR_DEFAULT_TX_PIN);
@@ -98,6 +100,7 @@ private:
     void carrierOff();
 #if UIAPIR_BACKEND_CH32V003
     uint16_t timerNow() const;
+    void releaseCarrierPad();
 #endif
     void waitUs(uint32_t durationUs) const;
     void mark(uint32_t durationUs);
@@ -142,6 +145,13 @@ private:
 #if UIAPIR_BACKEND_CH32V003
     GPIO_TypeDef *_rxPort;
     uint32_t _rxMask;
+
+    // The carrier pad, resolved once in begin() so that mark() and space()
+    // write a single compare register and never walk the pin map.
+    uint8_t _carrierChannel; // TIM1 channel 1..4, or 0 with no TX pin
+    GPIO_TypeDef *_carrierPort;
+    uint16_t _carrierPinMask;
+    volatile uint32_t *_carrierCompareReg;
 
     // TIM2 wraps every 65.536 ms, which is shorter than the idle periods
     // between bursts, so edge timestamps carry a millisecond stamp alongside

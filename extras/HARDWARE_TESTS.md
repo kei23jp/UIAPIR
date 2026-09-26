@@ -83,7 +83,7 @@ CH32V003 には USB ペリフェラルがないため、ブートローダーが
 
 | ピン | ポート | 用途 |
 |---|---|---|
-| D6 | PC4 | 搬送波出力。TIM1_CH4 を持つ唯一のパッドなので固定 |
+| D6 | PC4 | 搬送波出力（既定の TX パッド）。HT1 では A1 / A3 / D5 も TX として試す |
 | D15 | PD5 | アダプタへのシリアル TX |
 | D3 | PC1 | テスト対象の受信入力 |
 | D4 | PC2 | 2番目の受信入力（HT2） |
@@ -100,7 +100,7 @@ EXTI ラインはピン番号によって番号付けされ、各ラインは同
 ### HT1 - `begin()` / `end()` の契約
 
 **検証内容:**  
-対象 MCU に存在しない RX ピンが拒否されること、異なるピン番号で指定しても実際には同一パッドになる RX/TX の組み合わせが拒否されること、D6 以外の TX が拒否されること、共有タイマを別インスタンスが取得できないこと。
+対象 MCU に存在しない RX ピンが拒否されること、異なるピン番号で指定しても実際には同一パッドになる RX/TX の組み合わせが拒否されること、TIM1 出力のある 4 パッド（A2 / A1 / A3 / D5）が TX として受け付けられ、それ以外の TX が拒否されること、開始済みインスタンスの TX を別パッドへ移せること、共有タイマを別インスタンスが取得できないこと。
 
 **配線:** シリアルのみ。
 
@@ -121,7 +121,17 @@ PASS  begin(D6, A2) rejected: same pad, named the other way round
 PASS  begin(D3, A2) accepted: A2 is the same PC4 as D6
 PASS  begin(UNUSED, A2) accepted (transmit only)
 PASS  sendNEC() works with TX given as A2
-PASS  begin(D3, D5) rejected: TIM1_CH4 is only on PC4
+PASS  begin(D3, A1) accepted: PA1 is TIM1_CH2
+PASS  sendNEC() works with TX on A1
+PASS  begin(D3, A3) accepted: PD2 is TIM1_CH1
+PASS  begin(D3, D5) accepted: PC3 is TIM1_CH3
+PASS  begin(A1, A1) rejected: same pad
+PASS  begin(D3, A2) accepted, then transmits
+PASS  begin(D3, A1) on the started instance moves the carrier
+PASS  sendNEC() works after the move
+PASS  A2 is a plain low output after the move
+PASS  begin(D3, D7) rejected: PC5 has no TIM1 output
+PASS  begin(D3, D11) rejected: PD1 is SWIO, not offered as a carrier pad
 PASS  begin(D3, 100) rejected: no such pin
 PASS  first instance begins
 PASS  second instance refused while the first owns the timers

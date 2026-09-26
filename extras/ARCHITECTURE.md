@@ -7,7 +7,8 @@ and public API identical.
 
 ### UIAPduino V1.4 / CH32V003
 
-- TIM1 CH4 / D6 / PC4: 33% duty carrier PWM (38 or 40 kHz)
+- TIM1 CH1..CH4 (PD2 / PA1 / PC3 / PC4, picked by `begin()`'s `txPin`;
+  default PC4 = D6 / A2): 33% duty carrier PWM (38 or 40 kHz)
 - TIM2: free-running 1 MHz timebase for capture and blocking envelope timing
   (16-bit, so it wraps every 65.536 ms; inter-frame spacing on the send side is
   accumulated in software instead, because a NEC frame is longer than that)
