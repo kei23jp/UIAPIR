@@ -14,6 +14,20 @@ and public API identical.
   accumulated in software instead, because a NEC frame is longer than that)
 - EXTI: both-edge interrupt from a demodulating IR receiver
 
+`UIAPIR_ENABLE_TX=0` and `UIAPIR_ENABLE_RX=0` compile a direction out, and with
+it a timer:
+
+- Without TX, TIM1 is never touched.
+- Without RX, TIM2 is never touched. `waitUs()` then times the envelope from
+  SysTick, which the core runs as its 1 ms tick: an up counter that reloads
+  from CMP to 0. It reads `SysTick->CNT` and adds up the ticks between polls,
+  allowing for one reload per poll; polls are cycles apart, so none is missed,
+  and nothing waits on the millisecond count catching up after a reload.
+  `begin()` refuses to start if SysTick is not enabled with auto-reload. The
+  core's `micros()` is not used: it divides in 64 bits on a core without a
+  multiplier, and on the CH32V003 it treats the up counter as a down counter,
+  so it runs backwards within each millisecond.
+
 ### Portable Arduino backend
 
 All other Arduino cores use `tone()` for the carrier, `micros()` for elapsed
@@ -128,6 +142,7 @@ forever in `waitUs()`, which waits on a counter that no longer advances.
 
 ## Resource conflicts
 
-The initial implementation owns TIM1 and TIM2. Do not use Servo (TIM1), tone
-(TIM2), or another PWM output while UIAPIR is active. The EXTI input must not be
+A full build owns TIM1 and TIM2. Do not use Servo (TIM1), tone (TIM2), or
+another PWM output while UIAPIR is active. A build with one direction compiled
+out releases that direction's timer, as described above. The EXTI input must not be
 shared with another interrupt owner.

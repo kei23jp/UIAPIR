@@ -28,6 +28,8 @@ bool begin(uint8_t rxPin, const UIAPIRConfig &config);
 void end();
 ```
 
+`UIAPIR_ENABLE_TX=0` でビルドした場合、`txPin` の既定値は `UIAPIR_UNUSED_PIN` になります。
+
 ピンを確保し、タイムベースと受信割り込みを開始します。`rxPin` に `UIAPIR_UNUSED_PIN` を渡すと送信専用インスタンスになり、受信バッファも確保されません。`txPin` に `UIAPIR_UNUSED_PIN` を渡すと受信専用になります。
 
 CH32V003 の `txPin` は、TIM1 の出力チャネルを持つパッドでなければなりません。キャリアが TIM1 の PWM から出るためです。既定のピン割り当てでは PD2（`A3`、CH1）、PA1（`A1`、CH2）、PC3（`5`、CH3）、PC4（`A2` / `6`、CH4）の 4 つで、既定値 `UIAPIR_DEFAULT_TX_PIN` は PC4 です。**`6` と `A2` はどちらも PC4 を指すため、両方受け付けます**（基板シルクは `A2`）。開始済みのインスタンスに別の `txPin` で `begin()` を呼ぶと、古いパッドを LOW の通常出力に戻してからキャリアを移します。他の Arduino 対応ボードでは `tone()` を出力できる GPIO を指定してください。`rxPin` には `attachInterrupt()` を使える GPIO が必要です。
@@ -44,7 +46,10 @@ CH32V003 の `txPin` は、TIM1 の出力チャネルを持つパッドでなけ
 | `rxPin` と `txPin` が同じ物理パッド | 1 つのパッドに復調器出力とプッシュプルのキャリア出力は同居できません |
 | `config.captureBufferSize` が範囲外 | `UIAPIR_MIN_FRAME_DURATIONS` 以上 `UIAPIR_RAW_BUFFER_SIZE` 以下である必要があります |
 | バッファの確保に失敗 | `config.captureBuffer` が `nullptr` のときのみ（`malloc`） |
+| `UIAPIR_ENABLE_TX=0` のビルドで `txPin` が `UIAPIR_UNUSED_PIN` でない | 送信のコードがビルドに含まれていません |
+| `UIAPIR_ENABLE_RX=0` のビルドで `rxPin` が `UIAPIR_UNUSED_PIN` でない | 受信のコードがビルドに含まれていません。この場合 `config` は使われません |
 | CH32V003 で TIM2 のプリスケーラを作れない | `SystemCoreClock` が 1 MHz を作れない値の場合。UIAPduino では起こりません |
+| CH32V003 の `UIAPIR_ENABLE_RX=0` のビルドで SysTick が動いていない | 送信のタイミングを SysTick から取るためです。コアが `millis()` 用に動かしているので、通常は起こりません |
 
 `end()` はキャリア出力と受信割り込みを止め、ライブラリが確保したバッファを解放します。**`begin()` に拒否されたインスタンスで `end()` を呼んでも、他のインスタンスのハードウェアには触れません。** 所有権を持つ別のインスタンスが送信中でも、その送信を止めてしまうことはありません。
 
@@ -307,8 +312,12 @@ PlatformIO では `platformio.ini` の `build_flags` に書きます。
 | `UIAPIR_ENABLE_NEC` | 1 | 0 で NEC のデコーダと `sendNEC()` / `sendNECRepeat()` を除外 |
 | `UIAPIR_ENABLE_AEHA` | 1 | 0 で AEHA のデコーダと `sendAEHA()` を除外 |
 | `UIAPIR_ENABLE_SONY` | 1 | 0 で SIRC のデコーダと `sendSony()` を除外 |
+| `UIAPIR_ENABLE_TX` | 1 | 0 で送信 API をすべて除外。CH32V003 では TIM1 に触れなくなります |
+| `UIAPIR_ENABLE_RX` | 1 | 0 で受信 API をすべて除外。CH32V003 では TIM2 に触れなくなり、送信のタイミングは SysTick から取ります |
 
-無効にしたプロトコルの API は**宣言ごと消えます**。呼び出すと実行時に `false` が返るのではなく、コンパイルエラーになります。RAW は外せません。
+`UIAPIR_ENABLE_TX` と `UIAPIR_ENABLE_RX` を両方 0 にすると `#error` になります。どちらかを 0 にしたビルドで `UIAPIRLink.h` をインクルードした場合も `#error` になります。
+
+無効にしたプロトコルや方向の API は**宣言ごと消えます**。呼び出すと実行時に `false` が返るのではなく、コンパイルエラーになります。RAW は外せません。
 
 矛盾する値を指定した場合は、実行時に誤動作するのではなく `#error` でビルドが止まります。たとえば `UIAPIR_RAW_BUFFER_SIZE` を NEC フレーム（67 durations）より小さくすると、`"UIAPIR_RAW_BUFFER_SIZE cannot hold a NEC frame"` で失敗します。
 

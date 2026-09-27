@@ -50,6 +50,18 @@ do
 done
 echo "UIAPIR protocol selection compile checks passed"
 
+# Direction selection. The API check asserts that each switched-off direction
+# takes its methods with it, alone and combined with a protocol selection.
+# UIAPIR.cpp itself needs the target headers; the Arduino builds in
+# scripts/check.sh compile it in both directions.
+for sel in "-DUIAPIR_ENABLE_TX=0" "-DUIAPIR_ENABLE_RX=0" \
+    "-DUIAPIR_ENABLE_TX=0 $NEC_ONLY" "-DUIAPIR_ENABLE_RX=0 $NEC_ONLY"
+do
+    # shellcheck disable=SC2086
+    "$CXX" $FLAGS $sel -Itests -c tests/test_api.cpp -o "$OUT/api_sel.o"
+done
+echo "UIAPIR direction selection compile checks passed"
+
 # Capacity must follow configured AEHA limits, and control timing must survive
 # the supported fine-grained RAW quantisation as well as the default tick.
 for config in \

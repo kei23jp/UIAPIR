@@ -49,7 +49,54 @@ Arduino Uno、Arduino Pro Mini（ATmega328P、8 MHz / 16 MHz）、ESP32 Dev Modu
 
 ## インストール
 
-Arduino IDE で **Sketch > Include Library > Add .ZIP Library...** を選び、リリースページで配布される `UIAPIR-0.1.0.zip` を指定します。リポジトリを直接使う場合は、Arduino の `libraries/` フォルダへ `UIAPIR` という名前で置いても構いません。
+通常は [GitHub Release](https://github.com/kei23jp/UIAPIR/releases) の安定版を使ってください。まだリリースされていない最新の変更を試したい場合は、Git のチェックアウトか `main` ブランチの ZIP を使います。どの方法でも、最終的に Arduino の `libraries/` フォルダの下に `library.properties` を含むフォルダが 1 つできれば使えます。
+
+`libraries/` フォルダの場所は Arduino IDE の **File > Preferences > Sketchbook location** で確認できます。既定は次のとおりです。
+
+| OS | 場所 |
+| --- | --- |
+| Windows | `Documents\Arduino\libraries\` |
+| macOS | `~/Documents/Arduino/libraries/` |
+| Linux | `~/Arduino/libraries/` |
+
+### GitHub Release から入れる（推奨）
+
+1. [Releases](https://github.com/kei23jp/UIAPIR/releases) ページを開き、最新バージョン（例: `v0.1.0`）の **Assets** にある **Source code (zip)** をダウンロードします。ファイル名は `UIAPIR-0.1.0.zip` になります。
+2. Arduino IDE で **Sketch > Include Library > Add .ZIP Library...** を選び、ダウンロードした ZIP をそのまま指定します。展開する必要はありません。
+
+手動で入れる場合は、ZIP を展開してできる `UIAPIR-0.1.0` フォルダを `libraries/` へ置きます。フォルダ名は `UIAPIR` に変えても構いません。
+
+新しいバージョンへ更新するときは、`libraries/` にある古い UIAPIR のフォルダを削除してから、同じ手順で新しい ZIP を入れてください。
+
+### Git でチェックアウトする
+
+`libraries/` フォルダの中で clone します。フォルダ名は `UIAPIR` のままにしてください。
+
+```sh
+cd ~/Documents/Arduino/libraries
+git clone https://github.com/kei23jp/UIAPIR.git
+```
+
+更新するときは `UIAPIR` フォルダで `git pull` を実行し、Arduino IDE を再起動します。特定のリリースに固定したい場合は `git checkout v0.1.0` のようにタグを指定します。
+
+### main ブランチの ZIP をダウンロードする
+
+GitHub のリポジトリページで **Code > Download ZIP** を選ぶと `UIAPIR-main.zip` が得られます。中身はリリース前の最新状態です。
+
+- **Arduino IDE から入れる場合:** **Sketch > Include Library > Add .ZIP Library...** でこの ZIP をそのまま指定します。
+- **手動で入れる場合:** ZIP を展開すると `UIAPIR-main` フォルダができるので、`UIAPIR` に名前を変えて `libraries/` フォルダへ置きます。`libraries/UIAPIR/UIAPIR-main/` のように 1 段深くならないよう注意してください。
+
+いずれの場合も、置いたあとに Arduino IDE を再起動すると **File > Examples > UIAPIR** に使用例が表示されます。古いバージョンや別名のコピー（`UIAPIR-main`、`UIAPIR-0.1.0` など）が `libraries/` に残っていると、どちらが使われるか分からなくなるため、1 つだけにしてください。
+
+### PlatformIO
+
+`platformio.ini` の `lib_deps` にリポジトリの URL を指定します。`#` の後ろにタグを付けると、そのリリースに固定できます。
+
+```ini
+lib_deps = https://github.com/kei23jp/UIAPIR.git#v0.1.0
+```
+
+### ボードの選択
 
 主対象の UIAPduino では **UIAPduino > Pro Micro CH32V003** を選択してください。Arduino Uno 系や ESP32 で使う場合は、それぞれのボードを選択し、割り込み可能な RX ピンと `tone()` 対応の TX ピンを指定します。
 
@@ -66,7 +113,7 @@ IR LED はトランジスタまたは MOSFET を介して駆動してくださ�
 
 一般的な復調型受信モジュール（38 kHz タイプ）のデジタル出力を、選択した RX ピンに接続します。入力にはプルアップが設定されます。
 
-CH32V003 では TIM1 と TIM2 は予約されるため、UIAPIR が動作中は Servo、tone、および無関係な PWM 機能を使用してはいけません。他のボードでは、送信中に `tone()` が使うタイマーまたは PWM チャネルを他用途と共有しないでください。
+CH32V003 では TIM1 と TIM2 は予約されるため、UIAPIR が動作中は Servo、tone、および無関係な PWM 機能を使用してはいけません。送信か受信の片方しか使わない場合は、[送信 / 受信を外す](#送信--受信を外す)ビルドでどちらかのタイマーを空けられます。他のボードでは、送信中に `tone()` が使うタイマーまたは PWM チャネルを他用途と共有しないでください。
 
 ## 使ってみる
 
@@ -231,6 +278,47 @@ AEHA を外すと `UIAPIR_RAW_BUFFER_SIZE` の下限が外れます。20 バイ�
 | NEC のみ + `UIAPIR_RAW_BUFFER_SIZE=67` | 13708 | 704 | 67 | 771 (−545) |
 
 8 通りの組み合わせすべてを `-Werror` でコンパイルできることは、ホストテストが確認します。
+
+### 送信 / 受信を外す
+
+`UIAPIR_ENABLE_TX` または `UIAPIR_ENABLE_RX` に 0 を指定すると、送信側または受信側がビルドから外れます。既定はどちらも 1 で、両方を 0 にすると `#error` で止まります。
+
+```bash
+arduino-cli compile --build-property "compiler.cpp.extra_flags=-DUIAPIR_ENABLE_RX=0" ...
+```
+
+プロトコルの除外と同じく宣言ごと消えるため、外した側の API を呼ぶとコンパイルエラーになります。
+
+| 指定 | 消える API | `begin()` の扱い |
+|---|---|---|
+| `UIAPIR_ENABLE_TX=0` | `send()`、`sendNEC()` などすべての送信 API | `txPin` は `UIAPIR_UNUSED_PIN` のみ受け付けます。既定値も `UIAPIR_UNUSED_PIN` になるので `begin(rxPin)` と書けます |
+| `UIAPIR_ENABLE_RX=0` | `available()`、`receive()`、`learn()`、`resume()` | `rxPin` は `UIAPIR_UNUSED_PIN` のみ受け付けます。`UIAPIRConfig` は受信バッファの設定なので無視されます |
+
+CH32V003 では、容量より**タイマーが空くこと**の方が大きな効果です。
+
+| 指定 | UIAPIR が使わなくなるもの | 使えるようになるもの |
+|---|---|---|
+| `UIAPIR_ENABLE_TX=0` | TIM1（キャリア） | Servo、TIM1 のピン（PD2 / PA1 / PC3 / PC4）での `analogWrite()` |
+| `UIAPIR_ENABLE_RX=0` | TIM2（時間基準） | `tone()`、TIM2 のピン（PD4 / PD3 / PC0 / PD7）での `analogWrite()` |
+
+送信専用ビルドでは、送信のタイミングを TIM2 ではなく SysTick（コアが `millis()` のために 1 ms 周期で動かしているタイマー）のカウンタから取ります。SysTick の設定は変えないので、`millis()` や `delay()` には影響しません。コアの `micros()` は使っていません。CH32V003 では 1 ms の中で値が逆戻りするためです。
+
+実行時に `rxPin` や `txPin` へ `UIAPIR_UNUSED_PIN` を渡しても、タイマーは空きません。タイマーを空けるにはビルド時の指定が必要です。
+
+2 台間通信層 `UIAPIRLink.h` は送受信の両方を使うため、どちらかを外したビルドでインクルードすると `#error` になります。
+
+実測値です（ボタン、LED、シリアル出力だけの小さなスケッチに追加した場合の増分。PlatformIO、UIAPduino V1.4）。
+
+| 構成 | flash | 静的 RAM |
+|---|---|---|
+| 送信（NEC）、既定 | +2632 | +144 |
+| 送信（NEC）、`UIAPIR_ENABLE_RX=0` | +1316 (−1316) | +44 (−100) |
+| 受信、既定 | +2748 | +492 |
+| 受信、`UIAPIR_ENABLE_TX=0` | +2420 (−328) | +464 (−28) |
+
+受信の静的 RAM には、スケッチ側の `IRCode`（346 バイト）が含まれます。受信バッファのヒープ 340 バイトは含みません。
+
+送信専用と受信専用のビルドがコンパイルできることは、ホストテストと `scripts/check.sh` の両方が確認します。
 
 ## 2 台間のデータ通信
 

@@ -116,6 +116,24 @@ try {
         ))
     }
     Write-Host "UIAPIR protocol selection compile checks passed"
+
+    # Direction selection. The API check asserts that each switched-off
+    # direction takes its methods with it, alone and combined with a protocol
+    # selection. Kept in step with tests/run.sh.
+    $directions = @(
+        @("-DUIAPIR_ENABLE_TX=0"),
+        @("-DUIAPIR_ENABLE_RX=0"),
+        @("-DUIAPIR_ENABLE_TX=0", "-DUIAPIR_ENABLE_AEHA=0", "-DUIAPIR_ENABLE_SONY=0"),
+        @("-DUIAPIR_ENABLE_RX=0", "-DUIAPIR_ENABLE_AEHA=0", "-DUIAPIR_ENABLE_SONY=0")
+    )
+    foreach ($direction in $directions) {
+        Invoke-Checked $Cxx ($flags + $direction + @(
+            "-Itests",
+            "-c", "tests/test_api.cpp",
+            "-o", $apiSelObject
+        ))
+    }
+    Write-Host "UIAPIR direction selection compile checks passed"
     $linkConfigs = @(
         @("-DUIAPIR_ENABLE_NEC=0", "-DUIAPIR_ENABLE_SONY=0", "-DUIAPIR_MAX_AEHA_BYTES=3", "-DUIAPIR_RAW_BUFFER_SIZE=67"),
         @("-DUIAPIR_ENABLE_NEC=0", "-DUIAPIR_ENABLE_SONY=0", "-DUIAPIR_MAX_AEHA_BYTES=32", "-DUIAPIR_RAW_BUFFER_SIZE=515"),

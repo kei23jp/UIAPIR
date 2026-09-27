@@ -29,6 +29,7 @@ project and environment from the PlatformIO status bar.
 | `LearnRemote` | `examples/LearnRemote` |
 | `TwoBoardLinkSender` / `TwoBoardLinkReceiver` | `examples/TwoBoardLink` (endpoint 0 / 1) |
 | `HT1_BeginContract` .. `HT5_ReceiveDump` | `extras/hardware-tests/HTn_*` |
+| `HT4_TransmitTiming_TxOnly` | `extras/hardware-tests/HT4_TransmitTiming`, built with `UIAPIR_ENABLE_RX=0` (envelope timed from SysTick) |
 
 HT6 is not here. It is two firmwares that have to agree with each other, so it
 is its own project with its own environments:

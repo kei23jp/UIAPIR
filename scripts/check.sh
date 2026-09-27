@@ -34,9 +34,31 @@ compile_group() {
     done
 }
 
+# One sketch built with extra compiler definitions, for the build switches.
+compile_with_flags() {
+    label=$1
+    sketch=$2
+    flags=$3
+    echo "Compiling $label ($flags)"
+    "$ARDUINO_CLI" compile \
+        --fqbn "$FQBN" \
+        --library "$ROOT" \
+        --build-path "$BUILD_ROOT/$label" \
+        --build-property "compiler.cpp.extra_flags=$flags" \
+        "$sketch"
+}
+
 mkdir -p "$BUILD_ROOT"
 compile_group example "$ROOT/examples"
 compile_group hardware-test "$ROOT/extras/hardware-tests"
+
+# Direction switches. A transmit-only build swaps TIM2 for SysTick in the
+# envelope timing and a receive-only one drops TIM1, so both compile paths
+# through UIAPIR.cpp have to build, not just the header.
+compile_with_flags tx-only-SendProtocols "$ROOT/examples/SendProtocols" "-DUIAPIR_ENABLE_RX=0"
+compile_with_flags tx-only-HT4_TransmitTiming "$ROOT/extras/hardware-tests/HT4_TransmitTiming" "-DUIAPIR_ENABLE_RX=0"
+compile_with_flags rx-only-Receive "$ROOT/examples/Receive" "-DUIAPIR_ENABLE_TX=0"
+compile_with_flags rx-only-HT5_ReceiveDump "$ROOT/extras/hardware-tests/HT5_ReceiveDump" "-DUIAPIR_ENABLE_TX=0"
 
 # HT6 is the two-board test and needs PlatformIO rather than arduino-cli.
 # Skipped when pio is not installed, because most contributors will not have

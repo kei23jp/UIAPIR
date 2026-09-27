@@ -22,6 +22,43 @@
 
 #define UIAPIR_UNUSED_PIN 0xff
 
+// ---------------------------------------------------------------------------
+// Direction selection
+// ---------------------------------------------------------------------------
+// -DUIAPIR_ENABLE_TX=0 or -DUIAPIR_ENABLE_RX=0 compiles one direction out, the
+// same way UIAPIR_ENABLE_<protocol> does for a protocol: its methods and their
+// declarations go, so calling one is a compile error, not a runtime false.
+//
+// On the CH32V003 the point is as much the timers as the flash. The part has
+// two, and a full build owns both:
+//
+//   TIM1  carrier PWM             gone with UIAPIR_ENABLE_TX=0
+//   TIM2  1 MHz timebase          gone with UIAPIR_ENABLE_RX=0; a transmit-only
+//                                 build times its envelope from SysTick
+//
+// So a receive-only build leaves TIM1 to Servo and analogWrite() on its pads,
+// and a transmit-only build leaves TIM2 to tone() and analogWrite() on its.
+//
+// Like every UIAPIR_* option, these must be defined for the whole build (see
+// README), not with a #define in the sketch.
+#ifndef UIAPIR_ENABLE_TX
+#define UIAPIR_ENABLE_TX 1
+#endif
+#ifndef UIAPIR_ENABLE_RX
+#define UIAPIR_ENABLE_RX 1
+#endif
+#if !UIAPIR_ENABLE_TX && !UIAPIR_ENABLE_RX
+#error "UIAPIR_ENABLE_TX and UIAPIR_ENABLE_RX are both 0: nothing is left to build"
+#endif
+
+// begin()'s default TX pin. Without a transmitter the only acceptable TX pin is
+// UIAPIR_UNUSED_PIN, so begin(rxPin) has to default to that, not to a pad.
+#if UIAPIR_ENABLE_TX
+#define UIAPIR_BEGIN_DEFAULT_TX_PIN UIAPIR_DEFAULT_TX_PIN
+#else
+#define UIAPIR_BEGIN_DEFAULT_TX_PIN UIAPIR_UNUSED_PIN
+#endif
+
 // Runtime memory settings for begin(). When captureBuffer is null, UIAPIR
 // allocates captureBufferSize bytes and releases them in end(). Supplying a
 // buffer avoids heap use; that storage must remain valid until end().
@@ -46,18 +83,23 @@ public:
     // PD2 (A3, CH1), PA1 (A1, CH2), PC3 (5, CH3) or PC4 (A2 / D6, CH4).
     // Other Arduino targets can use any tone-capable output pin.
     // UIAPIR_UNUSED_PIN builds a receive-only instance.
-    bool begin(uint8_t rxPin, uint8_t txPin = UIAPIR_DEFAULT_TX_PIN);
+    // A direction compiled out (UIAPIR_ENABLE_TX / _RX = 0) only accepts
+    // UIAPIR_UNUSED_PIN for its pin; the config then has nothing to size.
+    bool begin(uint8_t rxPin, uint8_t txPin = UIAPIR_BEGIN_DEFAULT_TX_PIN);
     bool begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config);
     bool begin(uint8_t rxPin, const UIAPIRConfig &config) {
-        return begin(rxPin, UIAPIR_DEFAULT_TX_PIN, config);
+        return begin(rxPin, UIAPIR_BEGIN_DEFAULT_TX_PIN, config);
     }
     void end();
 
+#if UIAPIR_ENABLE_RX
     bool available();
     bool receive(IRCode &code);
     bool learn(IRCode &code) { return receive(code); }
     void resume();
+#endif
 
+#if UIAPIR_ENABLE_TX
     bool send(const IRCode &code, uint8_t repeats = 0);
 
     // The three protocol senders go away with their UIAPIR_ENABLE_<name>
@@ -88,18 +130,30 @@ public:
 
     bool sendRaw(const uint16_t *timingsUs, uint16_t count, uint8_t carrierKHz = 38);
     bool sendRawTicks(const uint8_t *ticks, uint16_t count, uint8_t carrierKHz = 38);
+#endif // UIAPIR_ENABLE_TX
 
 private:
     static UIAPIR *_active;
-    static void edgeISR();
-    void onEdge();
 
     bool configureTimingTimer();
+
+#if UIAPIR_ENABLE_RX
+    static void edgeISR();
+    void onEdge();
+    void attachReceiver();
+    void detachReceiver();
+    bool rxLevelIsMark() const;
+    uint32_t elapsedSinceLastEdge();
+#if UIAPIR_BACKEND_CH32V003
+    uint16_t timerNow() const;
+#endif
+#endif // UIAPIR_ENABLE_RX
+
+#if UIAPIR_ENABLE_TX
     bool configureCarrier(uint8_t carrierKHz);
     void carrierOn();
     void carrierOff();
 #if UIAPIR_BACKEND_CH32V003
-    uint16_t timerNow() const;
     void releaseCarrierPad();
 #endif
     void waitUs(uint32_t durationUs) const;
@@ -107,10 +161,6 @@ private:
     void space(uint32_t durationUs);
     void resetFrameClock();
     void padToPeriod(uint32_t periodUs);
-    void attachReceiver();
-    void detachReceiver();
-    bool rxLevelIsMark() const;
-    uint32_t elapsedSinceLastEdge();
     bool beginTransmit(uint8_t carrierKHz);
     void endTransmit();
 #if UIAPIR_ENABLE_NEC || UIAPIR_ENABLE_AEHA
@@ -127,44 +177,63 @@ private:
 #if UIAPIR_ENABLE_SONY
     void sendSonyFrame(uint32_t value, uint8_t bits);
 #endif
+#endif // UIAPIR_ENABLE_TX
 
-    uint8_t _rxPin;
-    uint8_t _txPin;
-    bool _started;
-    bool _receiverAttached;
-    uint16_t _carrierCompare;
-    uint8_t _carrierKHz;
+    // Members carry their initial values here, next to the switch that
+    // decides whether they exist, so the constructor has no list to keep in
+    // step with every combination of switches.
+    uint8_t _rxPin = UIAPIR_UNUSED_PIN;
+    uint8_t _txPin = UIAPIR_UNUSED_PIN;
+    bool _started = false;
+
+#if UIAPIR_ENABLE_TX
+    uint16_t _carrierCompare = 0;
+    uint8_t _carrierKHz = 0;
 
     // Microseconds emitted since the current frame started. Inter-frame
     // spacing is accumulated in software so it does not depend on a hardware
     // timer's counter width.
-    uint32_t _txElapsedUs;
+    uint32_t _txElapsedUs = 0;
 
-    // The CH32V003 backend resolves the receiver pin once so the ISR never
-    // walks the core's pin map.
 #if UIAPIR_BACKEND_CH32V003
-    GPIO_TypeDef *_rxPort;
-    uint32_t _rxMask;
-
     // The carrier pad, resolved once in begin() so that mark() and space()
     // write a single compare register and never walk the pin map.
-    uint8_t _carrierChannel; // TIM1 channel 1..4, or 0 with no TX pin
-    GPIO_TypeDef *_carrierPort;
-    uint16_t _carrierPinMask;
-    volatile uint32_t *_carrierCompareReg;
+    uint8_t _carrierChannel = 0; // TIM1 channel 1..4, or 0 with no TX pin
+    GPIO_TypeDef *_carrierPort = nullptr;
+    uint16_t _carrierPinMask = 0;
+    volatile uint32_t *_carrierCompareReg = nullptr;
+
+#if !UIAPIR_ENABLE_RX
+    // Transmit-only builds time from SysTick instead of TIM2: its reload
+    // length and ticks per microsecond, read in begin().
+    uint32_t _sysTickReload = 0;
+    uint32_t _sysTickPerUs = 0;
+#endif
+#endif
+#endif // UIAPIR_ENABLE_TX
+
+#if UIAPIR_ENABLE_RX
+    bool _receiverAttached = false;
+
+#if UIAPIR_BACKEND_CH32V003
+    // The CH32V003 backend resolves the receiver pin once so the ISR never
+    // walks the core's pin map.
+    GPIO_TypeDef *_rxPort = nullptr;
+    uint32_t _rxMask = 0;
 
     // TIM2 wraps every 65.536 ms, which is shorter than the idle periods
     // between bursts, so edge timestamps carry a millisecond stamp alongside
     // the counter to tell a long gap from an aliased short one.
-    volatile uint16_t _lastEdgeTicks;
-    volatile uint32_t _lastEdgeMs;
+    volatile uint16_t _lastEdgeTicks = 0;
+    volatile uint32_t _lastEdgeMs = 0;
 #else
     // micros() is a 32-bit counter on the portable backend; unsigned
     // subtraction keeps elapsed intervals correct across its wraparound.
-    volatile uint32_t _lastEdgeUs;
+    volatile uint32_t _lastEdgeUs = 0;
 #endif
 
-    uint8_t *_captureBuffer;
-    bool _ownsCaptureBuffer;
+    uint8_t *_captureBuffer = nullptr;
+    bool _ownsCaptureBuffer = false;
     uiapir_capture::IRCapture _capture;
+#endif // UIAPIR_ENABLE_RX
 };

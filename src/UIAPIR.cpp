@@ -10,7 +10,7 @@ using uiapir_capture::IRCapture;
 
 namespace {
 
-#if UIAPIR_BACKEND_CH32V003
+#if UIAPIR_BACKEND_CH32V003 && UIAPIR_ENABLE_TX
 // Arduino pin numbers are not unique per pad on this board: the analog aliases
 // are separate numbers for the same physical pin, so A2 (0xc2) and D6 (6) both
 // resolve to PC4. Comparing the numbers would miss that.
@@ -71,11 +71,15 @@ uint32_t gpioClockOf(const GPIO_TypeDef *port) {
     if (port == GPIOC) return RCC_APB2Periph_GPIOC;
     return RCC_APB2Periph_GPIOD;
 }
-#else
+#elif UIAPIR_ENABLE_TX && UIAPIR_ENABLE_RX
+// Only begin()'s RX/TX same-pad check needs it off the CH32V003, and that
+// check exists only when both directions are built.
 bool samePhysicalPin(uint8_t a, uint8_t b) {
     return a == b;
 }
+#endif
 
+#if !UIAPIR_BACKEND_CH32V003 && UIAPIR_ENABLE_RX
 bool receiverPinIsValid(uint8_t pin) {
     const int interrupt = digitalPinToInterrupt(pin);
 #ifdef NOT_AN_INTERRUPT
@@ -90,17 +94,9 @@ bool receiverPinIsValid(uint8_t pin) {
 
 UIAPIR *UIAPIR::_active = nullptr;
 
-UIAPIR::UIAPIR()
-    : _rxPin(UIAPIR_UNUSED_PIN), _txPin(UIAPIR_UNUSED_PIN), _started(false),
-      _receiverAttached(false), _carrierCompare(0), _carrierKHz(0), _txElapsedUs(0),
-#if UIAPIR_BACKEND_CH32V003
-      _rxPort(nullptr), _rxMask(0), _carrierChannel(0), _carrierPort(nullptr),
-      _carrierPinMask(0), _carrierCompareReg(&TIM1->CH4CVR), _lastEdgeTicks(0),
-      _lastEdgeMs(0),
-#else
-      _lastEdgeUs(0),
-#endif
-      _captureBuffer(nullptr), _ownsCaptureBuffer(false) {
+// Every member has its initial value in UIAPIR.h, beside the build switch
+// that decides whether it exists.
+UIAPIR::UIAPIR() {
 }
 
 bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin) {
@@ -111,17 +107,32 @@ bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config) {
     if (_active && _active != this) {
         return false; // EXTI callback and timers are intentionally single-instance.
     }
+    // A direction compiled out has no code behind it, so a pin for it is
+    // refused rather than ignored: the sketch asked for something this build
+    // cannot do, and a begin() that reports success would hide that.
+#if !UIAPIR_ENABLE_TX
+    if (txPin != UIAPIR_UNUSED_PIN) {
+        return false;
+    }
+#endif
+#if !UIAPIR_ENABLE_RX
+    (void)config; // it only sizes the capture buffer
+    if (rxPin != UIAPIR_UNUSED_PIN) {
+        return false;
+    }
+#endif
     // The CH32V003 carrier is TIM1 PWM, so the transmit pin has to be a pad
     // with a TIM1 output channel behind it: PD2, PA1, PC3 or PC4 (silk A3, A1,
     // 5, A2). The check resolves the pad rather than comparing Arduino
     // numbers: A2 (0xc2) and D6 (6) are two numbers for the same PC4, and a
     // sketch written against the board silk must not be refused for it.
-#if UIAPIR_BACKEND_CH32V003
+#if UIAPIR_BACKEND_CH32V003 && UIAPIR_ENABLE_TX
     const uint8_t carrierChannel = (txPin == UIAPIR_UNUSED_PIN) ? 0 : carrierChannelOf(txPin);
     if (txPin != UIAPIR_UNUSED_PIN && carrierChannel == 0) {
         return false;
     }
 #endif
+#if UIAPIR_ENABLE_RX
     if (rxPin != UIAPIR_UNUSED_PIN) {
         // An out-of-range pin makes the core's attachInterrupt() return without
         // doing anything, which would leave begin() reporting success on a
@@ -133,11 +144,13 @@ bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config) {
 #endif
             return false;
         }
+#if UIAPIR_ENABLE_TX
         // One pad cannot host both the demodulator output and a push-pull
         // carrier drive.
         if (txPin != UIAPIR_UNUSED_PIN && samePhysicalPin(rxPin, txPin)) {
             return false;
         }
+#endif
     }
 
     uint8_t *nextCaptureBuffer = nullptr;
@@ -172,21 +185,21 @@ bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config) {
     if (_started) {
         detachReceiver();
     }
+#endif // UIAPIR_ENABLE_RX
 
     if (!configureTimingTimer()) {
+#if UIAPIR_ENABLE_RX
         if (nextOwnsCaptureBuffer && nextCaptureBuffer != _captureBuffer) {
             free(nextCaptureBuffer);
         }
         if (_started && _rxPin != UIAPIR_UNUSED_PIN) {
             attachReceiver();
         }
+#endif
         return false;
     }
 
-    uint8_t *oldCaptureBuffer = _captureBuffer;
-    const bool oldOwnsCaptureBuffer = _ownsCaptureBuffer;
-
-#if UIAPIR_BACKEND_CH32V003
+#if UIAPIR_BACKEND_CH32V003 && UIAPIR_ENABLE_TX
     // Moving the carrier to another pad on a started instance: hand the old
     // pad back first, or TIM1 would keep it claimed and driven low.
     if (_started && _txPin != UIAPIR_UNUSED_PIN &&
@@ -204,18 +217,24 @@ bool UIAPIR::begin(uint8_t rxPin, uint8_t txPin, const UIAPIRConfig &config) {
 
     _rxPin = rxPin;
     _txPin = txPin;
+#if UIAPIR_ENABLE_RX
+    uint8_t *oldCaptureBuffer = _captureBuffer;
+    const bool oldOwnsCaptureBuffer = _ownsCaptureBuffer;
     _captureBuffer = nextCaptureBuffer;
     _ownsCaptureBuffer = nextOwnsCaptureBuffer;
     _capture.setBuffer(nextCaptureBuffer, nextCaptureBufferSize);
     if (oldOwnsCaptureBuffer && oldCaptureBuffer != nextCaptureBuffer) {
         free(oldCaptureBuffer);
     }
+#endif
 
     _active = this;
     _started = true;
+#if UIAPIR_ENABLE_RX
     if (_rxPin != UIAPIR_UNUSED_PIN) {
         attachReceiver();
     }
+#endif
     return true;
 }
 
@@ -225,38 +244,50 @@ void UIAPIR::end() {
         // already run. TIM1 and TIM2 are shared, so stopping them from here
         // would halt another instance mid-transmit and hang it in waitUs().
         _started = false;
+#if UIAPIR_ENABLE_RX
         if (_ownsCaptureBuffer) {
             free(_captureBuffer);
         }
         _captureBuffer = nullptr;
         _ownsCaptureBuffer = false;
         _capture.setBuffer(nullptr, 0);
+#endif
         return;
     }
+#if UIAPIR_ENABLE_RX
     detachReceiver();
+#endif
 #if UIAPIR_BACKEND_CH32V003
+#if UIAPIR_ENABLE_TX
     if (_carrierCompare != 0) {
         // TIM1 is only clocked once a transmit has configured the carrier.
         releaseCarrierPad();
         TIM_Cmd(TIM1, DISABLE);
     }
+#endif
+#if UIAPIR_ENABLE_RX
+    // Only a build with the receiver ever started TIM2. A transmit-only build
+    // times from SysTick, and TIM2 may be running tone() for the sketch.
     TIM_Cmd(TIM2, DISABLE);
-#else
+#endif
+#elif UIAPIR_ENABLE_TX
     carrierOff();
     _carrierKHz = 0;
 #endif
     _started = false;
     _active = nullptr;
+#if UIAPIR_ENABLE_RX
     if (_ownsCaptureBuffer) {
         free(_captureBuffer);
     }
     _captureBuffer = nullptr;
     _ownsCaptureBuffer = false;
     _capture.setBuffer(nullptr, 0);
+#endif
 }
 
 bool UIAPIR::configureTimingTimer() {
-#if UIAPIR_BACKEND_CH32V003
+#if UIAPIR_BACKEND_CH32V003 && UIAPIR_ENABLE_RX
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
     TIM_TimeBaseInitTypeDef timer = {};
     uint32_t divisor = SystemCoreClock / 1000000U;
@@ -271,11 +302,26 @@ bool UIAPIR::configureTimingTimer() {
     TIM_SetCounter(TIM2, 0);
     TIM_Cmd(TIM2, ENABLE);
     return true;
+#elif UIAPIR_BACKEND_CH32V003
+    // Transmit-only: waitUs() times from the core's SysTick millisecond tick
+    // (see there) and TIM2 is never touched. Refuse to start if SysTick is not
+    // running as an auto-reloading tick, rather than transmit with timing that
+    // is wrong.
+    const uint32_t enabledAutoReload = 0x9U; // CTLR.STE | CTLR.STRE
+    const uint32_t reload = SysTick->CMP + 1U;
+    const uint32_t ticksPerUs = reload / 1000U;
+    if (ticksPerUs == 0 || (SysTick->CTLR & enabledAutoReload) != enabledAutoReload) {
+        return false;
+    }
+    _sysTickReload = reload;
+    _sysTickPerUs = ticksPerUs;
+    return true;
 #else
     return true;
 #endif
 }
 
+#if UIAPIR_ENABLE_TX
 bool UIAPIR::configureCarrier(uint8_t carrierKHz) {
     // [ChaN] the three supported formats all sit in the 33..40 kHz band.
     // begin() resolved the pad to a TIM1 channel; everything below programs
@@ -370,10 +416,6 @@ void UIAPIR::carrierOff() {
 }
 
 #if UIAPIR_BACKEND_CH32V003
-uint16_t UIAPIR::timerNow() const {
-    return (uint16_t)TIM_GetCounter(TIM2);
-}
-
 // Undo configureCarrier() for the current pad. Used when end() releases the
 // transmitter and when begin() moves it to another pad; a no-op until a
 // transmit has actually programmed TIM1 for this pad.
@@ -393,11 +435,38 @@ void UIAPIR::releaseCarrierPad() {
 #endif
 
 void UIAPIR::waitUs(uint32_t durationUs) const {
-#if UIAPIR_BACKEND_CH32V003
+#if UIAPIR_BACKEND_CH32V003 && UIAPIR_ENABLE_RX
     while (durationUs) {
         const uint16_t chunk = durationUs > 60000U ? 60000U : (uint16_t)durationUs;
         const uint16_t start = timerNow();
         while ((uint16_t)(timerNow() - start) < chunk) {
+        }
+        durationUs -= chunk;
+    }
+#elif UIAPIR_BACKEND_CH32V003
+    // Transmit-only build: TIM2 is left to the sketch, so time the envelope
+    // from SysTick instead. The core runs it as the millisecond tick - an up
+    // counter that reloads from CMP to 0 every millisecond - and never
+    // reconfigures it, so reading the counter leaves millis() alone.
+    //
+    // Each poll adds the ticks since the previous one, allowing for a reload
+    // in between. Polls are a few cycles apart, nowhere near a millisecond, so
+    // no reload is missed; and summing in software avoids the window in which
+    // the counter has reloaded but the millisecond count has not yet caught up.
+    //
+    // The core's micros() is no substitute: it computes in 64 bits on a core
+    // with no multiplier or divider, and on the CH32V003 it treats the up
+    // counter as a down counter, so it steps backwards inside each millisecond.
+    const uint32_t reload = _sysTickReload;
+    while (durationUs) {
+        const uint32_t chunk = durationUs > 1000000U ? 1000000U : durationUs;
+        uint32_t remaining = chunk * _sysTickPerUs;
+        uint32_t previous = SysTick->CNT;
+        while (remaining) {
+            const uint32_t now = SysTick->CNT;
+            const uint32_t step = now >= previous ? now - previous : now + reload - previous;
+            previous = now;
+            remaining = step >= remaining ? 0 : remaining - step;
         }
         durationUs -= chunk;
     }
@@ -428,12 +497,21 @@ void UIAPIR::resetFrameClock() {
 void UIAPIR::padToPeriod(uint32_t periodUs) {
     // A frame period runs from the start of one frame to the start of the
     // next, so the gap depends on how long the frame just sent actually was.
-    // TIM2 wraps every 65.536 ms, which is shorter than a NEC frame, so the
-    // elapsed time is accumulated in software rather than measured.
+    // The timebase wraps well inside a NEC frame (TIM2 every 65.536 ms,
+    // SysTick every millisecond), so the elapsed time is accumulated in
+    // software rather than measured.
     const uint32_t remaining = _txElapsedUs < periodUs ? periodUs - _txElapsedUs : 0;
     space(remaining > UIAPIR_MIN_TX_GAP_US ? remaining : UIAPIR_MIN_TX_GAP_US);
     resetFrameClock();
 }
+#endif // UIAPIR_ENABLE_TX
+
+#if UIAPIR_ENABLE_RX
+#if UIAPIR_BACKEND_CH32V003
+uint16_t UIAPIR::timerNow() const {
+    return (uint16_t)TIM_GetCounter(TIM2);
+}
+#endif
 
 void UIAPIR::attachReceiver() {
     if (_receiverAttached || _rxPin == UIAPIR_UNUSED_PIN) {
@@ -602,13 +680,20 @@ bool UIAPIR::receive(IRCode &code) {
 #endif
     return true;
 }
+#endif // UIAPIR_ENABLE_RX
 
+#if UIAPIR_ENABLE_TX
 bool UIAPIR::beginTransmit(uint8_t carrierKHz) {
     if (!_started || _txPin == UIAPIR_UNUSED_PIN) return false;
+#if UIAPIR_ENABLE_RX
+    // Off while transmitting, so the receiver cannot record our own carrier.
     detachReceiver();
     resume();
+#endif
     if (!configureCarrier(carrierKHz)) {
+#if UIAPIR_ENABLE_RX
         attachReceiver();
+#endif
         return false;
     }
     resetFrameClock();
@@ -617,7 +702,9 @@ bool UIAPIR::beginTransmit(uint8_t carrierKHz) {
 
 void UIAPIR::endTransmit() {
     carrierOff();
+#if UIAPIR_ENABLE_RX
     attachReceiver();
+#endif
 }
 
 #if UIAPIR_ENABLE_NEC || UIAPIR_ENABLE_AEHA
@@ -801,3 +888,4 @@ bool UIAPIR::send(const IRCode &code, uint8_t repeats) {
         return false;
     }
 }
+#endif // UIAPIR_ENABLE_TX

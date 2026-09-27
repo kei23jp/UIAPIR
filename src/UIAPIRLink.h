@@ -5,6 +5,11 @@
 #include "UIAPIR.h"
 #include "UIAPIRProtocol.h"
 
+// A link sends frames and listens for the reply, so it needs both directions.
+#if !UIAPIR_ENABLE_TX || !UIAPIR_ENABLE_RX
+#error "UIAPIRLink needs both directions: build with UIAPIR_ENABLE_TX=1 and UIAPIR_ENABLE_RX=1"
+#endif
+
 enum class UIAPIRLinkMode : uint8_t { Simple, Reliable };
 enum class UIAPIRLinkStatus : uint8_t { Idle, Pending, Sent, Acknowledged, Failed };
 enum class UIAPIRLinkFormat : uint8_t { NEC, NECExtended, AEHA, Sony12, Sony15, Sony20, Invalid };

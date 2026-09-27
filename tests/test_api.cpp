@@ -2,6 +2,49 @@
 // Copyright (c) 2026 kei23jp
 
 #include "../src/UIAPIR.h"
+
+#include <type_traits>
+#include <utility>
+
+// A direction switched off must take its methods with it, so that calling one
+// is a compile error rather than a runtime false. Detect the members instead of
+// calling them, so this file also compiles in the builds that lack them.
+template <class T, class = void>
+struct HasSend : std::false_type {};
+template <class T>
+struct HasSend<T, decltype((void)std::declval<T &>().send(std::declval<const IRCode &>()))>
+    : std::true_type {};
+
+template <class T, class = void>
+struct HasReceive : std::false_type {};
+template <class T>
+struct HasReceive<T, decltype((void)std::declval<T &>().receive(std::declval<IRCode &>()))>
+    : std::true_type {};
+
+static_assert(HasSend<UIAPIR>::value == (UIAPIR_ENABLE_TX != 0),
+              "send() must exist exactly when UIAPIR_ENABLE_TX is set");
+static_assert(HasReceive<UIAPIR>::value == (UIAPIR_ENABLE_RX != 0),
+              "receive() must exist exactly when UIAPIR_ENABLE_RX is set");
+
+void compileDirectionApi(UIAPIR &ir, IRCode &code) {
+#if UIAPIR_ENABLE_RX
+    (void)ir.available();
+    (void)ir.receive(code);
+    (void)ir.learn(code);
+    ir.resume();
+#endif
+#if UIAPIR_ENABLE_TX
+    (void)ir.send(code, 1);
+    static const uint16_t raw[] = {9000, 4500, 560};
+    (void)ir.sendRaw(raw, 3);
+    (void)ir.sendRawTicks(code.data.raw.ticks, 3, 38);
+#endif
+    (void)ir;
+    (void)code;
+}
+
+// The link sends and listens, so it only exists with both directions.
+#if UIAPIR_ENABLE_TX && UIAPIR_ENABLE_RX
 #include "../src/UIAPIRLink.h"
 
 void compileLinkApi(UIAPIR &ir, IRCode &scratch, UIAPIRPacket &packet) {
@@ -17,6 +60,7 @@ void compileLinkApi(UIAPIR &ir, IRCode &scratch, UIAPIRPacket &packet) {
     (void)sony.maxPayloadBits();
     (void)sony.requiredCaptureSize();
 }
+#endif
 
 // Neither class may embed a UIAPIR_RAW_BUFFER_SIZE-sized array; the buffer is
 // allocated by begin() instead. The bound is a fixed number rather than

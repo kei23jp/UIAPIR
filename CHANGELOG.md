@@ -18,6 +18,10 @@ UIAPIR の注目すべき変更をこのファイルに記録します。
   （PD2 / PA1 / PC3 / PC4 = シルク A3 / A1 / 5 / A2）から選べるように変更。既定値は従来どおり
   PC4（D6 / A2）。開始済みインスタンスの `begin()` で TX を別パッドへ移すと、古いパッドは
   LOW の通常出力に戻る。HT1 に各パッドの受理と移動のケースを追加。
+- 送信側または受信側をビルドから外す `UIAPIR_ENABLE_TX` / `UIAPIR_ENABLE_RX` を追加。外した側の API は
+  宣言ごと消える。CH32V003 では、送信を外すと TIM1 に、受信を外すと TIM2 に触れなくなり、それぞれ
+  Servo / TIM1 のピンでの `analogWrite()`、`tone()` / TIM2 のピンでの `analogWrite()` と併用できる。
+  送信専用ビルドのタイミングは SysTick から取る。`examples/Receive` は TX ピンを確保しないよう変更。
 
 - NEC / 拡張 NEC（リピートフレームを含む）、AEHA/Kaseikyo（最大 20 バイト）、
   Sony SIRC（12 / 15 / 20 bit）、および RAW の送受信。
